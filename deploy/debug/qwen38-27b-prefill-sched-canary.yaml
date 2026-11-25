@@ -1,0 +1,162 @@
+# Prefill-scheduler canary: the 5930k workhorse lane's posture on the XTX, on
+# the image that carries the scheduler patch (plugin-common 0.8.0).
+#
+# Row: .loom/60-validation-matrix.md `gfx1100-xtx-prefill-sched-2026-11-25`
+# (pre-registered before any run; arms, bars and kill rules are there).
+#
+# What it tests. A 2K request beside a 56K prefill waits 8.8-10.2 s for its
+# first token on the workhorse. A step trace on 2026-11-25 split that into one
+# uncapped step of the lone long prompt (3.2-4.4 s, vLLM drops the cap while
+# one request is alone) and five 416-token steps of the short prompt's own
+# prefill. The patch caps a lone prompt at FLEXINFER_PREFILL_SOLO_CAP tokens a
+# step and never caps a prompt with at most FLEXINFER_PREFILL_CAP_EXEMPT
+# tokens left. No engine has scheduled a request through it yet.
+#
+# Two arms, one image, this Model:
+#   A0: as written below, neither variable set (the stock scheduler);
+#   A1: both variables set. Operator, after A0 is measured (a pod restart):
+#       kubectl -n flexinfer-system patch model qwen38-27b-prefill-sched-canary \
+#         --type merge -p '{"spec":{"config":{"env":{"FLEXINFER_PREFILL_SOLO_CAP":"832","FLEXINFER_PREFILL_CAP_EXEMPT":"2080"}}}}'
+#     A1's boot log must read `prefill_solo_cap=832, prefill_cap_exempt=2080`
+#     and an install line that names vLLM source d76cc2225755 (bar P1).
+#
+# The spec is the workhorse's (deploy/models/qwen38-27b-autoround-workhorse.yaml).
+# What differs, and why:
+#   - the image: the workhorse runs runtime@1a2dd85c (plugin-common 0.7.0);
+#   - the card: XTX selector, the XTX shared group, gpu.count 2 and
+#     vramEstimateMB 23200 as every XTX text lane sets them, hipVisibleDevices
+#     "0", and a compile cache under the XTX lane's base;
+#   - name, servedModelName, priority 480, idleTimeout 3h, no LiteLLM route,
+#     no service labels, no context-overflow annotation: it holds the card for
+#     the run and takes no live traffic;
+#   - hfRevision pinned to the snapshot the node caches hold (2d7425f7);
+#   - no structuredOutput capability: it does not render on gfx1100 today.
+# FLEXINFER_RDNA3_W4A16=dot2 is the workhorse's weight kernel. It last ran on
+# this card on 2026-11-23 and was cleared as the cause of that day's drops
+# (the third drop came without it).
+#
+# Apply (operator, once): kubectl apply -f deploy/debug/qwen38-27b-prefill-sched-canary.yaml
+# Applying it parks the XTX 128K lane (priority 300) for the length of the
+# run. Not in deploy/debug/kustomization.yaml on purpose: `apply -k` would
+# recreate unrelated debug Models.
+# Remove: flexinfer MCP delete_model qwen38-27b-prefill-sched-canary. The 128K
+# lane comes back on its own. The Local cache (~18 GB, XTX root) is removed
+# with the Model.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-prefill-sched-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/60-validation-matrix.md#gfx1100-xtx-prefill-sched-2026-11-25"
+    flexinfer.ai/promotion-state: debug-canary-prefill-sched
+spec:
+  backend: vllm
+  # runtime:rocm-gfx1100-serving-v033-1d448a25, published by master pipeline
+  # 41075 (job 519745) from the merge of !1452; digest read from Harbor
+  # 2026-11-25. vLLM 0.33.0+rocm72 with plugin-common 0.8.0 / text plugin
+  # 0.14.0. Build log: "prefill scheduling patch installable (rewritten source
+  # 5425979556d2 at solo cap 832, exempt 2080)". Not prewarmed on the XTX: the
+  # first start pulls the plugin layers on top of the vLLM base the 128K
+  # lane's image already holds.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:56367fb1b4db1f11b96dd34402946764da9d3db191e8258498c07ec17971d58e
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # The XTX 128K lane's base. The controller mounts
+      # <hostPath>/<namespace>/<Model name>, so this canary compiles and tunes
+      # into a directory of its own and the lane's tuned tables are untouched.
+      # The fp16 segmented tables tune cold on the first boot; A1's restart
+      # reuses them.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    # Above the 128K lane (300) so it takes the card; below the creative
+    # lanes (500) so a media render still wins. Same slot every XTX canary
+    # has used.
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    # The workhorse's value: room for one cold tune of the fp16 tables.
+    coldStartTimeout: 45m
+  config:
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
+      FLEXINFER_RDNA3_W4A16: dot2
+      # Arm A1 adds, by the patch in the header:
+      #   FLEXINFER_PREFILL_SOLO_CAP: "832"
+      #   FLEXINFER_PREFILL_CAP_EXEMPT: "2080"
+    dedicatedDeployment: true
+    vllmVersion: "0.33.0"
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    stallWindow: 10m
+    kvPoolRecheck: false
+    # The workhorse's cap. One state block (416 tokens) a step for each of two
+    # prompts in prefill; the patch changes what happens around it.
+    longPrefillTokenThreshold: 416
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-prefill-sched-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-prefill-sched-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
