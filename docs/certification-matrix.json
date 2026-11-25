@@ -272,11 +272,11 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-prefill-sched-2026-11-25",
       "validation_rows": [
-        "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25"
+        "gfx1100-xtx-prefill-sched-2026-11-25"
       ],
       "date": "2026-11-25",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1848,9 +1848,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "does the scheduler patch cut a short request's time to first token beside a long prefill? Canary qwen38-27b-prefill-sched-canary, the 5930k workhorse lane's posture on the XTX (65536, fp16 KV on…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-prefill-sched-2026-11-25",
       "date": "2026-11-25",
       "source": ".loom/60-validation-matrix.md"
