@@ -1,0 +1,154 @@
+# pi-adapted LoRA kill test: Qwen3.8-27B with the harness-hub/Qwen3.8-27B-pi-adapted
+# adapter on the workhorse's posture, on the XTX.
+#
+# Row: .loom/60-validation-matrix.md `gfx1100-xtx-qwen38-pi-lora-killtest-2026-11-25`
+# (pre-registered before any run; arms, bars and kill rules are there).
+#
+# What it tests. The adapter is a rank-32 LoRA over the q/k/v/o and MLP
+# projections of Qwen/Qwen3.8-27B, trained with RL for the pi coding agent, the
+# harness Mills uses. Its card reports SWE-bench Pro (hard 51) 39.2 % -> 64.7 %
+# and Terminal-Bench 2.1 39.5 % -> 55.8 % under pi with thinking off. It was
+# trained and evaluated on BF16 weights. This canary asks whether that carries
+# to this stack: the INT4 AutoRound base, the RDNA3 W4A16 kernel, MTP drafting
+# (vLLM's drafter runs without the adapter) and the Mills harness.
+#
+# Two files, applied in order:
+#   1. this one: the Model alone. With no LoRAAdapter the controller renders
+#      no LoRA flag, so this is arm B0, the like-for-like baseline.
+#   2. qwen38-27b-pi-lora-canary-adapter.yaml: the LoRAAdapter. The controller
+#      then sets enableLora (--enable-lora --max-loras 1 --max-lora-rank 32),
+#      which restarts the pod, and loads the adapter from Hugging Face at run
+#      time. Arms L0 (this Model's name, flag on) and L1 (the adapter's name,
+#      qwen38-27b-pi-adapted) are then served side by side.
+#
+# Posture: the 5930k workhorse's (64K fp16 KV, embed host, MTP K=2,
+# ROCM_SEGMENTED_ATTN, the 416-token long-prefill cap), so a pass carries to
+# it. Differences from the workhorse: the node (and its two device-plugin
+# slots), the image (4e337e5e in place of 1a2dd85c: the same vLLM, newer
+# plugins), no dot2 (FLEXINFER_RDNA3_W4A16 stays off on this card), a pinned
+# hfRevision, priority 480, no LiteLLM route or service labels, and the
+# logging every XTX canary carries (--jit-monitor-verbose, cudagraphMetrics).
+#
+# Applying it parks the XTX 128K lane (priority 300) for the run. The first
+# boot stages 18 GB and tunes segmented attention cold for the fp16 64K shape
+# (74 workloads, about 10 min on the 5930k); the row's step 1 can seed the
+# compile cache from qwen38-27b-gptq-rdna3-canary's directory instead.
+#
+# Apply (operator): kubectl apply -f deploy/debug/qwen38-27b-pi-lora-canary.yaml
+# Not in deploy/debug/kustomization.yaml on purpose.
+# Remove: flexinfer MCP delete_lora_adapter qwen38-27b-pi-adapted-canary, then
+# delete_model qwen38-27b-pi-lora-canary. The 128K lane returns on its own and
+# the Local cache is removed with the Model (on-delete policy `delete`).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-pi-lora-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/60-validation-matrix.md#gfx1100-xtx-qwen38-pi-lora-killtest-2026-11-25"
+    flexinfer.ai/promotion-state: debug-canary-pi-lora
+spec:
+  backend: vllm
+  # rocm-gfx1100-serving-v033-9fe2350e (pinned-4e337e5e50ae), the image the XTX
+  # 128K lane runs since !1446 and the XTX prewarm profile holds: vLLM
+  # 0.33.0-rocm72, text plugin 0.13.0, plugin-common 0.7.0. No table-kernel or
+  # dot2 flag here: the KV cache is fp16, and dot2 stays off on this card.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:4e337e5e50aed88ef7231611879d14067cda12a2a59a2fb12602be6f91d0f72a
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # Shared XTX canary base; this Model gets its own subdir. The first
+      # serving arm autotunes the 64K fp16 segmented kernels (~10-15 min).
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    # The usual XTX canary slot: above the 128K warm lane (300), below the
+    # creative lanes (500).
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    coldStartTimeout: 45m
+  config:
+    command:
+      - bash
+      - -lc
+      - |
+        echo "pi-lora-canary: embed_host=${FLEXINFER_EMBED_HOST:-} at $(date -u +%FT%TZ)"
+        exec vllm serve "$@" --jit-monitor-verbose
+      - vllm
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
+    vllmVersion: "0.33.0"
+    cudagraphMetrics: true
+    kvPoolRecheck: false
+    stallWindow: 10m
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    # The workhorse's value since !1432.
+    longPrefillTokenThreshold: 416
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-pi-lora-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-pi-lora-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
