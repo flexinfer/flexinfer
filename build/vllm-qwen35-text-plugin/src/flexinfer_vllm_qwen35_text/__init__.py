@@ -6,13 +6,15 @@ mamba state helpers on ``Qwen3_5ForCausalLMBase``. The plugin keeps only what
 the runtime still lacks: the consumer-ROCm FLA autotuner pruning
 (``FLEXINFER_FLA_AUTOTUNE``), the text-only MTP config contract, the MTP head
 quantization policy (``FLEXINFER_QWEN35_MTP_HEAD``) and the MoE expert-name
-normalization. It also installs four opt-in, model-agnostic patches, since
+normalization. It also installs five opt-in, model-agnostic patches, since
 this is the plugin every gfx1100 serving image loads: the segmented attention
 autotune at the runtime block-table width
 (``FLEXINFER_SEGMENTED_RUNTIME_TABLES``), the input-embedding table in mapped
 host memory (``FLEXINFER_EMBED_HOST``, 0.12.0), fp8 KV on segmented attention
-for gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``, 0.12.0) and that fp8 KV
-converted to fp16 through a table (``FLEXINFER_SEGMENTED_FP8_LUT``, 0.13.0).
+for gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``, 0.12.0), that fp8 KV
+converted to fp16 through a table (``FLEXINFER_SEGMENTED_FP8_LUT``, 0.13.0)
+and the scheduler's prefill chunk sizing (``FLEXINFER_PREFILL_SOLO_CAP``,
+``FLEXINFER_PREFILL_CAP_EXEMPT``, 0.14.0).
 
 0.11.0 removed the vLLM 0.23/0.26 compatibility code: the text-class
 registration, the hybrid-state copy and the GPTQ fused-expert loader hook
@@ -21,7 +23,7 @@ refuses to run on a vLLM whose registry lacks the text classes, instead of
 silently registering them on a runtime nothing qualifies any more. The frozen
 gfx906 vLLM 0.20.1 image keeps the 0.8.0 plugin it was certified with.
 
-ROCm autotune pruning and those four patches live in
+ROCm autotune pruning and those five patches live in
 ``flexinfer_vllm_common``, shared with every other FlexInfer vLLM plugin so the
 copies cannot drift. Install ``build/vllm-plugin-common`` before this package.
 """
@@ -38,6 +40,7 @@ from flexinfer_vllm_common.rocm import (
     select_rocm_safe_fla_configs as _select_rocm_safe_fla_configs,
 )
 from flexinfer_vllm_common.embed_host import install_embed_host_if_enabled
+from flexinfer_vllm_common.prefill_sched import install_prefill_sched_if_enabled
 from flexinfer_vllm_common.segmented import (
     install_segmented_runtime_tables_if_enabled,
 )
@@ -241,6 +244,7 @@ def register() -> None:
     embed_host = install_embed_host_if_enabled()
     segmented_fp8 = install_segmented_fp8_if_enabled()
     segmented_fp8_lut = install_segmented_fp8_lut_if_enabled()
+    prefill_solo_cap, prefill_cap_exempt = install_prefill_sched_if_enabled()
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
     mtp_head_policy = _mtp_head_policy()
     quantized_mtp_experts = _strict_env_flag("FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ")
@@ -279,6 +283,8 @@ def register() -> None:
         f"embed_host={'on' if embed_host else 'off'}, "
         f"segmented_fp8_gfx11={'on' if segmented_fp8 else 'off'}, "
         f"segmented_fp8_lut={'on' if segmented_fp8_lut else 'off'}, "
+        f"prefill_solo_cap={prefill_solo_cap or 'off'}, "
+        f"prefill_cap_exempt={prefill_cap_exempt or 'off'}, "
         f"mtp_head={mtp_head_policy}, "
         f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
     )

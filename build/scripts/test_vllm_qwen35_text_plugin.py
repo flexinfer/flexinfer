@@ -489,6 +489,22 @@ class PluginTest(unittest.TestCase):
         self.assertIn("FLEXINFER_SEGMENTED_FP8_LUT=1", str(ctx.exception))
         self.assertIn("vllm.platforms.rocm", str(ctx.exception))
 
+    def test_prefill_sched_flags_reach_the_install(self) -> None:
+        """The values are strict, and a vLLM without the scheduler fails the boot."""
+        kkt = "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt"
+        for name in ("FLEXINFER_PREFILL_SOLO_CAP", "FLEXINFER_PREFILL_CAP_EXEMPT"):
+            with self.assertRaises(RuntimeError) as ctx:
+                _register_with(kkt, env={name: "on"})
+            self.assertIn(f"{name} must be a whole number", str(ctx.exception))
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                kkt,
+                env={"FLEXINFER_PREFILL_CAP_EXEMPT": "2080"},
+                extra_modules={"vllm.v1.core.sched.scheduler": None},
+            )
+        self.assertIn("FLEXINFER_PREFILL_CAP_EXEMPT", str(ctx.exception))
+        self.assertIn("vllm.v1.core.sched.scheduler", str(ctx.exception))
+
     def test_unknown_fla_layout_is_fatal(self) -> None:
         """A vLLM with neither known kernel path must fail loudly, not skip pruning."""
         with self.assertRaises(RuntimeError) as ctx:

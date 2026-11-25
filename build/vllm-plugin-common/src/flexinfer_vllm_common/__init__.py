@@ -14,6 +14,9 @@ here once instead of being copied per plugin:
 * ``segmented_fp8_lut`` — converting that fp8 KV to fp16 through a 256-entry
   table instead of Triton's compare-and-select lowering, opt-in
   (``FLEXINFER_SEGMENTED_FP8_LUT``).
+* ``prefill_sched`` — capping a lone long prompt's prefill chunk and exempting
+  short prompts from the chunk cap in vLLM's scheduler, opt-in
+  (``FLEXINFER_PREFILL_SOLO_CAP``, ``FLEXINFER_PREFILL_CAP_EXEMPT``).
 * ``labels`` — resolving the label space of a composite (multimodal) config,
   whose ``text_config`` does not carry ``id2label``, for the seqcls plugin's
   head-size assertions.
@@ -58,6 +61,13 @@ from .segmented_fp8 import (
     install_segmented_fp8,
     install_segmented_fp8_if_enabled,
 )
+from .prefill_sched import (
+    PREFILL_CAP_EXEMPT_ENV,
+    PREFILL_SOLO_CAP_ENV,
+    install_prefill_sched,
+    install_prefill_sched_if_enabled,
+    prefill_sched_settings,
+)
 from .segmented_fp8_lut import (
     SEGMENTED_FP8_LUT_ENV,
     fp8_lut_launch_counts,
@@ -71,6 +81,8 @@ __all__ = [
     "FLA_AUTOTUNE_ENV",
     "FLA_AUTOTUNE_POLICIES",
     "FLA_OPS_PREFIXES",
+    "PREFILL_CAP_EXEMPT_ENV",
+    "PREFILL_SOLO_CAP_ENV",
     "SEGMENTED_FP8_ENV",
     "SEGMENTED_FP8_LUT_ENV",
     "SEGMENTED_RUNTIME_TABLES_ENV",
@@ -81,6 +93,8 @@ __all__ = [
     "import_fla_kkt_module",
     "install_embed_host",
     "install_embed_host_if_enabled",
+    "install_prefill_sched",
+    "install_prefill_sched_if_enabled",
     "install_segmented_fp8",
     "install_segmented_fp8_if_enabled",
     "install_segmented_fp8_lut",
@@ -88,6 +102,7 @@ __all__ = [
     "install_segmented_runtime_tables",
     "install_segmented_runtime_tables_if_enabled",
     "needs_safe_fla_config",
+    "prefill_sched_settings",
     "prune_fla_configs_if_needed",
     "resolve_num_labels",
     "select_rocm_safe_fla_configs",
