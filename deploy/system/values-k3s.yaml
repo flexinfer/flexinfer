@@ -801,7 +801,18 @@ imagePrewarm:
         # measured FLEXINFER_RDNA3_W4A16=dot2 at +10.7 % decode at 2K (rows
         # gfx1100-gptq-rdna3-*). Pulled ahead of the lane repins; 51afd0d3 above
         # stays as their rollback.
+        # 2026-11-26: the workhorse's rollback since it moved to 56367fb1 below.
         - registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0
+        # 2026-11-26 (prefill-scheduler trial kept, row
+        # gfx1100-5930k-workhorse-prefill-sched-2026-11-25 `pass`): the image
+        # qwen38-27b-autoround-workhorse runs since !1455
+        # (rocm-gfx1100-serving-v033-1d448a25, pinned-56367fb1b4db; 1a2dd85c's
+        # vLLM 0.33.0-rocm72 base with plugin-common 0.8.0). Resident since the
+        # trial roll pulled it on 2026-11-25, so this entry pulls nothing; it is
+        # listed so image GC (60/50 on this node) cannot drop the live lane's
+        # image and the pinned-* guard keeps it in Harbor. Root 69 % used,
+        # 306 GB free on 2026-11-26 (node-exporter).
+        - registry.harbor.lan/flexinfer/runtime@sha256:56367fb1b4db1f11b96dd34402946764da9d3db191e8258498c07ec17971d58e
         # 2026-10-27 (S6a image, held for slice S6b): the stacked 0.32 runtime
         # image of build profile gfx1100-serving-v032 (vLLM 0.32 + runtime
         # supervisor + diffusers 0.42 + snac; rocm-gfx1100-serving-v032-c444b5ff,
