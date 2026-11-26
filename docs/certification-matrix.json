@@ -85,7 +85,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-11-24",
+      "latest_evidence_date": "2026-11-25",
       "evidence": [
         "gemma4-26b-a4b-gptq",
         "gemma4-26b-a4b-gptq-22k",
@@ -272,11 +272,11 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "conditional",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-prefill-sched-2026-11-25",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
       "validation_rows": [
-        "gfx1100-xtx-prefill-sched-2026-11-25"
+        "gfx1100-5930k-workhorse-prefill-sched-2026-11-25"
       ],
       "date": "2026-11-25",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1354,9 +1354,9 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "conditional",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
       "validation_rows": [
         "gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
         "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
@@ -1367,7 +1367,7 @@
         "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
-      "date": "2026-11-24",
+      "date": "2026-11-25",
       "source": "deploy/models/qwen38-27b-autoround-workhorse.yaml"
     },
     {
@@ -1865,9 +1865,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "a watched trial of the scheduler patch on the live lane. qwen38-27b-autoround-workhorse moves to the image that carries plugin-common 0.8.0 and sets FLEXINFER_PREFILL_SOLO_CAP=832 and…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
       "date": "2026-11-25",
       "source": ".loom/60-validation-matrix.md"
