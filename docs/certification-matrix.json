@@ -1841,6 +1841,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx906-rerank-batch-width-format-2026-11-26",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "llamacpp",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "radeonvii"
+      ],
+      "decision": "pending",
+      "title": "what bounds the Radeon VII reranker's speed, the width of a pass or the weight format? A one-shot harness pod beside the live runtime (deploy/debug/kt-rerank-batch-gfx906-canary.yaml, harness…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-rerank-batch-width-format-2026-11-26",
+      "date": "2026-11-26",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
       "kind": "validation",
       "support_level": "supported",
