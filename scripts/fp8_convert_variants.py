@@ -59,7 +59,7 @@ KNOWN_SOURCES = {
     ),
 }
 
-VARIANTS = ("stock", "exact", "exact_nonan", "approx", "lut")
+VARIANTS = ("stock", "exact", "exact_nonan", "approx", "lut", "fmul")
 HELPER_NAME = "_fx_fp8_to_f16"
 NAN_BITS = 0x7E00
 SUBNORMAL_STEP = 2.0**-9
@@ -135,12 +135,27 @@ def lut_bits(code: int) -> int:
     return stock_bits(code)
 
 
+def fmul_bits(code: int) -> int:
+    """The arithmetic of Triton's later software cast (triton-lang/triton#12492).
+
+    The fp8 bits sit in fp16 position with the fp8 bias, and one fp16 multiply
+    by 2**8 rebiases the normal codes and normalizes exponent 0 exactly. One
+    select covers NaN. Bit-identical to stock on all 256 codes.
+    """
+    magnitude = code & 0x7F
+    bits = f16_bits(f16_value(magnitude << 7) * 256.0)
+    if magnitude == 0x7F:
+        bits = NAN_BITS
+    return bits | ((code & 0x80) << 8)
+
+
 MODELS = {
     "stock": stock_bits,
     "exact": exact_bits,
     "exact_nonan": exact_nonan_bits,
     "approx": approx_bits,
     "lut": lut_bits,
+    "fmul": fmul_bits,
 }
 
 
@@ -199,6 +214,16 @@ HELPERS = {
     "exact_nonan": _HELPER_HEAD + _HELPER_SUBNORMAL + _HELPER_TAIL,
     "approx": (
         _HELPER_HEAD + "    bits = ((mag << 7) + 0x2000).to(tl.uint16)\n" + _HELPER_TAIL
+    ),
+    # A proxy for the compiler's own form after triton-lang/triton#12492: the
+    # same arithmetic written in Triton source. The compiler may schedule its
+    # packed fp16 multiply more tightly than this.
+    "fmul": (
+        _HELPER_HEAD
+        + "    half = (mag << 7).to(tl.uint16).to(tl.float16, bitcast=True)\n"
+        + "    bits = (half * 256.0).to(tl.float16).to(tl.uint16, bitcast=True)\n"
+        + "    bits = tl.where(mag == 0x7F, 0x7E00, bits)\n"
+        + _HELPER_TAIL
     ),
     "lut": f"""
 @triton.jit

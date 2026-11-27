@@ -109,8 +109,8 @@ class Format(unittest.TestCase):
 
 
 class Variants(unittest.TestCase):
-    def test_exact_and_lut_are_bit_identical_to_stock(self):
-        for variant in ("exact", "lut"):
+    def test_exact_lut_and_fmul_are_bit_identical_to_stock(self):
+        for variant in ("exact", "lut", "fmul"):
             self.assertEqual(fx.differing_codes(variant), [], variant)
         self.assertEqual(fx.lut_table(), [fx.stock_bits(c) for c in range(256)])
 
@@ -130,6 +130,18 @@ class Variants(unittest.TestCase):
         self.assertEqual(fx.f16_value(fx.approx_bits(0x00)), 2.0**-7)
         self.assertEqual(fx.f16_value(fx.approx_bits(0x80)), -(2.0**-7))
         self.assertEqual(fx.f16_value(fx.approx_bits(0x07)), 2.0**-7 * 1.875)
+
+    def test_fmul_rebiases_with_one_multiply(self):
+        # A normal code and every exponent-0 code come out of the same multiply.
+        self.assertEqual(fx.fmul_bits(0x38), fx.f16_bits(1.0))
+        for code in range(8):
+            self.assertEqual(fx.f16_value(fx.fmul_bits(code)), code * 2.0**-9)
+        self.assertEqual(fx.fmul_bits(0x7F), 0x7E00)
+        self.assertEqual(fx.fmul_bits(0xFF), 0xFE00)
+        helper = fx.HELPERS["fmul"]
+        self.assertIn("* 256.0", helper)
+        self.assertEqual(helper.count("tl.where"), 1)
+        self.assertNotIn("mag < 8", helper)
 
     def test_helpers_carry_the_constants_their_models_use(self):
         for variant in ("exact", "exact_nonan"):
@@ -171,7 +183,7 @@ class Rewriter(unittest.TestCase):
         self.assertIn(f"k_f16 = {fx.HELPER_NAME}(k).to(q.dtype)", out)
 
     def test_only_the_lut_variant_changes_the_kernel_signature(self):
-        for variant in ("exact", "exact_nonan", "approx"):
+        for variant in ("exact", "exact_nonan", "approx", "fmul"):
             out = fx.rewrite_source(FIXTURE, variant)
             self.assertNotIn("FXLUT", out, variant)
             self.assertNotIn("_fx_lut", out, variant)
