@@ -47,6 +47,18 @@
 #       < scripts/bench-gfx1100-fp8-attention.py
 # The hold lasts 90 min (`sleep 5400`); delete the Model when the bench is done.
 #
+# 2026-11-27: also the hold vehicle for the upstream validation runs (row
+# gfx1100-xtx-fp8-upcast-upstream-validation-2026-11-27): two engine boots
+# started by hand on port 8011, `vllm bench serve` against them, and pytest,
+# about 90 min in all. Two settings changed for that:
+#   - HOLD_SECONDS (env below) sets the hold; it is 3.5 h as written. Unset,
+#     the hold is the old 90 min.
+#   - coldStartTimeout 45m -> 4h. It is the startup probe's budget (one try
+#     every 2 s on port 8000), and nothing answers on 8000 in a hold, so at
+#     45m the kubelet would restart the container and lose /tmp mid-run.
+# The engines listen on 8011, so the pod never turns Ready and the proxy
+# never routes to it.
+#
 # Apply (operator, once): kubectl apply -f deploy/debug/qwen38-27b-gptq-rdna3-canary.yaml
 # Remove: flexinfer MCP delete_model qwen38-27b-gptq-rdna3-canary. The XTX warm
 # lane (priority 300) returns on its own.
@@ -95,7 +107,7 @@ spec:
     enabled: true
     minReplicas: 1
     idleTimeout: 3h
-    coldStartTimeout: 45m
+    coldStartTimeout: 4h
   config:
     command:
       - bash
@@ -103,7 +115,7 @@ spec:
       - |
         echo "gptq-rdna3: arm=${GPTQ_ARM:-} mode=${GPTQ_MODE:-serve} rdna3_w4a16=${FLEXINFER_RDNA3_W4A16:-off} at $(date -u +%FT%TZ)"
         if [ "${GPTQ_MODE:-serve}" = hold ]; then
-          exec sleep 5400
+          exec sleep "${HOLD_SECONDS:-5400}"
         fi
         exec vllm serve "$@" --profiler-config '{"profiler":"torch","torch_profiler_dir":"/tmp/vllm-profile","torch_profiler_with_stack":false,"ignore_frontend":true}'
       - vllm
@@ -112,6 +124,7 @@ spec:
       FLEXINFER_EMBED_HOST: "1"
       GPTQ_MODE: hold
       GPTQ_ARM: hold
+      HOLD_SECONDS: "12600"
     vllmVersion: "0.33.0"
     cudagraphMetrics: true
     kvPoolRecheck: false
