@@ -272,11 +272,11 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-fp8-upcast-fmul-proxy-2026-11-27",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-fp8-upcast-upstream-validation-2026-11-27",
       "validation_rows": [
-        "gfx1100-xtx-fp8-upcast-fmul-proxy-2026-11-27"
+        "gfx1100-xtx-fp8-upcast-upstream-validation-2026-11-27"
       ],
       "date": "2026-11-27",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1849,9 +1849,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "the runs vLLM's contributing guide asks of a pull request, for the two upstream patches drafted from the fp8 table kernel: the test suite on the patched code, and an end-to-end vllm bench serve…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-fp8-upcast-upstream-validation-2026-11-27",
       "date": "2026-11-27",
       "source": ".loom/60-validation-matrix.md"
