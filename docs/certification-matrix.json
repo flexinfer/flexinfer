@@ -274,11 +274,11 @@
       "gpu_class": "gfx1100",
       "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-fp8-upcast-fmul-proxy-2026-11-27",
       "validation_rows": [
-        "gfx1100-5930k-workhorse-prefill-sched-2026-11-25"
+        "gfx1100-xtx-fp8-upcast-fmul-proxy-2026-11-27"
       ],
-      "date": "2026-11-25",
+      "date": "2026-11-27",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1849,9 +1849,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "before the fp8 lookup-table conversion is offered upstream, does the table still beat the arithmetic that Triton's later software cast uses? A microbenchmark on the flex card with no engine loaded…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-fp8-upcast-fmul-proxy-2026-11-27",
       "date": "2026-11-27",
       "source": ".loom/60-validation-matrix.md"
