@@ -4,9 +4,9 @@
 //
 // It exercises three OpenAI-compatible routes the proxy now exposes:
 //
-//	POST /v1/audio/transcriptions  → Whisper Model CR (gfx1100)   [ASR]
-//	POST /v1/chat/completions      → gemma4-26b Model CR (gfx1100) [LLM]
-//	POST /v1/audio/speech          → Kokoro TTS Deployment (CPU)   [TTS]
+//	POST /v1/audio/transcriptions  → `asr` label, whisper.cpp lane (gfx906)  [ASR]
+//	POST /v1/chat/completions      → `workhorse` label, Qwen3.8-27B (gfx1100) [LLM]
+//	POST /v1/audio/speech          → Kokoro TTS Deployment (CPU)              [TTS]
 //
 // With Verify enabled, the TTS audio is fed back through ASR so the round-trip
 // transcript can be compared to the model's reply — a machine check that the

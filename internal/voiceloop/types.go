@@ -2,10 +2,12 @@ package voiceloop
 
 // Config holds the per-run knobs for the conversational loop.
 type Config struct {
-	// ChatModel is the OpenAI `model` for /v1/chat/completions (e.g. the
-	// gemma4-26b textgen Model CR). Resolved by the proxy's model router.
+	// ChatModel is the OpenAI `model` for /v1/chat/completions: a Model CR
+	// name or a service label such as `workhorse`. Resolved by the proxy's
+	// model router.
 	ChatModel string
-	// ASRModel is the `model` for /v1/audio/transcriptions (Whisper Model CR).
+	// ASRModel is the `model` for /v1/audio/transcriptions: a Whisper Model
+	// CR name or the `asr` service label.
 	ASRModel string
 	// TTSModel is the `model` for /v1/audio/speech (Kokoro: "kokoro").
 	TTSModel string
