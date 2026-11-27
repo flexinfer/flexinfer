@@ -101,10 +101,11 @@ go run ./cmd/voice-loop \
 Pass `-audio question.wav` instead of `-text` to start from speech. The engine
 lives in `internal/voiceloop` (fully unit-tested with httptest mocks).
 
-> **Note:** `-verify` and `-audio` drive `/v1/audio/transcriptions`, which is a
-> demand-driven Whisper Model CR — the first call cold-starts Whisper and
-> preempts the 26B textgen, then releases it. Expect a one-time cold-start
-> latency on the first ASR call.
+> **Note:** `-verify` and `-audio` drive `/v1/audio/transcriptions` through the
+> `asr` service label (the `-asr-model` default). It resolves to
+> `whisper-large-v3-turbo-radeonvii`, a warm whisper.cpp lane on the Radeon VII,
+> so ASR neither cold-starts nor preempts a text lane. The gfx1100 vLLM lane
+> `whisper-large-v3-turbo` is parked and answers 404 `model_parked` by name.
 
 ## Operations
 
